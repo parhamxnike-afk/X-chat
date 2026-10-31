@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="fa" dir="rtl">
 <head>
@@ -127,27 +128,7 @@ $("logout").onclick=async()=>{
  if(refreshTimer)clearInterval(refreshTimer);
  await db.auth.signOut();currentUser=null;selectedUser=null;$("messages").innerHTML="";$("users").innerHTML="";showAuth();status("از حساب خارج شدی.");
 };
- if ("serviceWorker" in navigator) {
-  window.addEventListener("load", async () => {
-    try {
-      await navigator.serviceWorker.register("./service-worker.js");
-      console.log("X Chat notification worker registered");
-    } catch (error) {
-      console.error("خطا در ثبت اعلان:", error);
-    }
-  });
- }
-async function enableNotifications() {
-  if (!("Notification" in window)) {
-    alert("مرورگر از اعلان پشتیبانی نمی‌کند");
-    return;
-  }
-
-  const permission = await Notification.requestPermission();
-  alert(permission === "granted"
-    ? "اعلان فعال شد"
-    : "اجازه اعلان داده نشد");
-}(async()=>{const {data}=await db.auth.getSession();if(data.session)await startApp(data.session.user)})();
+(async()=>{const {data}=await db.auth.getSession();if(data.session)await startApp(data.session.user)})();
 </script>
 </body>
 </html>
