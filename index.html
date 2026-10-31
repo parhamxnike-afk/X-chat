@@ -137,7 +137,22 @@ $("logout").onclick=async()=>{
     }
   });
  }
-(async()=>{const {data}=await db.auth.getSession();if(data.session)await startApp(data.session.user)})();
+async function enableNotifications() {
+  if (!("Notification" in window)) {
+    alert("مرورگر از اعلان پشتیبانی نمی‌کند");
+    return;
+  }
+
+  const permission = await Notification.requestPermission();
+  alert(permission === "granted"
+    ? "اعلان فعال شد"
+    : "اجازه اعلان داده نشد");
+}(async()=>{const {data}=await db.auth.getSession();if(data.session)await startApp(data.session.user)})();
 </script>
 </body>
 </html>
+const notifyButton = document.createElement("button");
+notifyButton.textContent = "🔔 فعال‌کردن اعلان";
+notifyButton.style.margin = "10px";
+notifyButton.onclick = enableNotifications;
+document.querySelector("header").appendChild(notifyButton);
