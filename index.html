@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X Chat | پیام‌رسان خصوصی</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1220;color:#fff;font-family:Tahoma,Arial,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:14px}
+.app{width:100%;max-width:950px;min-height:600px;background:#111c30;border:1px solid #263954;border-radius:22px;overflow:hidden;box-shadow:0 20px 60px #0008}
+header{background:#172b49;padding:18px;display:flex;justify-content:space-between;align-items:center}
+.logo{font-size:23px;font-weight:bold;color:#55aaff}.small{color:#a9bdd7;font-size:12px;margin-top:5px}
+button{border:0;border-radius:10px;padding:12px 16px;background:#2785ed;color:white;font-weight:bold;cursor:pointer}
+button:disabled{opacity:.5}
+input{width:100%;padding:14px;margin:8px 0;border:1px solid #344a68;border-radius:10px;background:#0b1729;color:white;font-size:14px}
+.auth{max-width:400px;margin:35px auto;padding:20px}.auth h2{text-align:center}.auth button{width:100%;margin-top:10px}
+#appArea{display:none}.layout{display:grid;grid-template-columns:270px 1fr;min-height:540px}
+.sidebar{background:#14233a;padding:15px;border-left:1px solid #263954}.sidebar h3{font-size:15px}
+#users{max-height:440px;overflow:auto}
+.user{padding:13px;margin:7px 0;background:#203653;border-radius:10px;cursor:pointer}
+.user.active,.user:hover{background:#1769bd}
+.chat{display:flex;flex-direction:column;min-width:0}.chat-title{padding:16px;background:#172b49;font-weight:bold}
+#messages{flex:1;min-height:350px;max-height:440px;overflow-y:auto;padding:15px}
+.msg{width:fit-content;max-width:85%;padding:12px;border-radius:14px;margin:9px 0;background:#263b58;overflow-wrap:anywhere}
+.msg.mine{background:#1769bd;margin-right:auto}
+.msg time{display:block;font-size:10px;color:#d4e5f8;margin-top:6px}
+.send{display:flex;gap:8px;padding:12px;background:#14233a}.send input{margin:0;min-width:0}.send button{white-space:nowrap}
+#status{font-size:12px;color:#ffc76b;text-align:center;padding:8px;overflow-wrap:anywhere}
+@media(max-width:650px){.layout{grid-template-columns:1fr}.sidebar{border-left:0;border-bottom:1px solid #263954}#users{display:flex;gap:7px;overflow-x:auto;max-height:none}.user{min-width:120px}.app{min-height:90vh}}
+</style>
+</head>
+<body>
+<div class="app">
+<header><div><div class="logo">✦ X CHAT</div><div class="small">پیام‌رسان خصوصی</div></div><button id="logout" style="display:none">خروج</button></header>
+<section id="authArea" class="auth">
+<h2>به X Chat خوش آمدی</h2>
+<input id="username" placeholder="نام کاربری (برای ثبت‌نام)">
+<input id="email" type="email" placeholder="ایمیل">
+<input id="password" type="password" placeholder="رمز عبور (حداقل ۶ کاراکتر)">
+<button id="signup">ثبت‌نام</button><button id="login" style="background:#344b6b">ورود</button>
+<div id="status">برای شروع ثبت‌نام کن یا وارد شو.</div>
+</section>
+<section id="appArea"><div class="layout">
+<aside class="sidebar"><h3>👥 کاربران</h3><div id="users"></div></aside>
+<main class="chat"><div class="chat-title" id="chatTitle">یک کاربر انتخاب کن</div><div id="messages"></div>
+<div class="send"><input id="messageInput" placeholder="پیامت را بنویس..." disabled><button id="sendBtn" disabled>ارسال</button></div></main>
+</div></section>
+</div>
+<script>
+const SUPABASE_URL = "https://rxjmnlivdtivpknzwwcq.supabase.co";
+const SUPABASE_KEY = "sb_publishable_DhuXIk2DxDopcgbggz0RDw_qnCHu0aw";
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let currentUser=null, selectedUser=null, refreshTimer=null;
+const $=id=>document.getElementById(id);
+function status(s){$("status").textContent=s}
+function showApp(){$("authArea").style.display="none";$("appArea").style.display="block";$("logout").style.display="block"}
+function showAuth(){$("authArea").style.display="block";$("appArea").style.display="none";$("logout").style.display="none"}
+async function ensureProfile(user){
+ const username=(user.user_metadata?.username || user.email.split("@")[0]).trim().slice(0,30);
+ const {error}=await db.from("profiles").upsert({id:user.id,username},{onConflict:"id",ignoreDuplicates:true});
+ if(error) throw error;
+}
+async function loadUsers(){
+ const {data,error}=await db.from("profiles").select("id,username").neq("id",currentUser.id).order("username");
+ if(error){status("خطا در دریافت کاربران: "+error.message);return}
+ $("users").innerHTML="";
+ (data||[]).forEach(user=>{
+  const el=document.createElement("div");
+  el.className="user"+(selectedUser?.id===user.id?" active":"");
+  el.textContent="👤 "+user.username;
+  el.onclick=()=>{selectedUser=user;$("chatTitle").textContent="چت با "+user.username;$("messageInput").disabled=false;$("sendBtn").disabled=false;loadUsers();loadMessages()};
+  $("users").appendChild(el);
+ });
+}
+async function loadMessages(){
+ if(!selectedUser||!currentUser)return;
+ const a=currentUser.id,b=selectedUser.id;
+ const {data,error}=await db.from("messages").select("id,sender_id,receiver_id,content,created_at")
+ .or(`and(sender_id.eq.${a},receiver_id.eq.${b}),and(sender_id.eq.${b},receiver_id.eq.${a})`)
+ .order("created_at",{ascending:true}).limit(200);
+ if(error){status("خطا در دریافت پیام‌ها: "+error.message);return}
+ const box=$("messages");box.innerHTML="";
+ (data||[]).forEach(m=>{
+  const el=document.createElement("div");el.className="msg"+(m.sender_id===currentUser.id?" mine":"");
+  const content=document.createElement("div");content.textContent=m.content;
+  const time=document.createElement("time");time.textContent=new Date(m.created_at).toLocaleString("fa-IR");
+  el.append(content,time);box.appendChild(el);
+ });
+ box.scrollTop=box.scrollHeight;
+}
+async function sendMessage(){
+ if(!selectedUser)return;
+ const content=$("messageInput").value.trim();if(!content)return;
+ $("sendBtn").disabled=true;
+ const {error}=await db.from("messages").insert({sender_id:currentUser.id,receiver_id:selectedUser.id,content});
+ $("sendBtn").disabled=false;
+ if(error){status("ارسال نشد: "+error.message);return}
+ $("messageInput").value="";await loadMessages();
+}
+async function startApp(user){
+ try{
+  currentUser=user;await ensureProfile(user);showApp();await loadUsers();
+  if(refreshTimer)clearInterval(refreshTimer);
+  refreshTimer=setInterval(()=>{loadUsers();if(selectedUser)loadMessages()},4000);
+ }catch(e){showAuth();status("خطا در آماده‌سازی حساب: "+e.message)}
+}
+$("signup").onclick=async()=>{
+ const username=$("username").value.trim(),email=$("email").value.trim(),password=$("password").value;
+ if(!username||username.length>30||!email||password.length<6){status("نام کاربری (حداکثر ۳۰ حرف)، ایمیل و رمز حداقل ۶ حرف را وارد کن.");return}
+ status("در حال ثبت‌نام...");
+ const {data,error}=await db.auth.signUp({email,password,options:{data:{username}}});
+ if(error){status("خطا: "+error.message);return}
+ if(!data.session){status("ثبت‌نام انجام شد. ایمیلت را تأیید کن، سپس وارد شو.");return}
+ await startApp(data.user);
+};
+$("login").onclick=async()=>{
+ const email=$("email").value.trim(),password=$("password").value;
+ status("در حال ورود...");
+ const {data,error}=await db.auth.signInWithPassword({email,password});
+ if(error){status("خطا در ورود: "+error.message);return}
+ await startApp(data.user);
+};
+$("sendBtn").onclick=sendMessage;
+$("messageInput").addEventListener("keydown",e=>{if(e.key==="Enter")sendMessage()});
+$("logout").onclick=async()=>{
+ if(refreshTimer)clearInterval(refreshTimer);
+ await db.auth.signOut();currentUser=null;selectedUser=null;$("messages").innerHTML="";$("users").innerHTML="";showAuth();status("از حساب خارج شدی.");
+};
+(async()=>{const {data}=await db.auth.getSession();if(data.session)await startApp(data.session.user)})();
+</script>
+</body>
+</html>
