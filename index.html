@@ -91,13 +91,18 @@ header{padding:13px}
 const SUPABASE_URL = "https://rxjmnlivdtivpknzwwcq.supabase.co";
 const SUPABASE_KEY = "sb_publishable_DhuXIk2DxDopcgbggz0RDw_qnCHu0aw";
 
+const PUSH_FUNCTION_URL =
+ "https://rxjmnlivdtivpknzwwcq.supabase.co/functions/v1/send-push";
+
+const VAPID_PUBLIC_KEY =
+ "BCezDQplrOU_SQHHuoGCub3Krmf7BkI6HYJAGVNI5EMuEYm6QelWLnTLaVeNuqWk1cJVcb3MXtMulGadoRz6RdA";
+
 const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentUser=null;
 let selectedUser=null;
 let refreshTimer=null;
-let lastNotificationCheck=null;
-let checkingNotifications=false;
+let swRegistration=null;
 
 const $=id=>document.getElementById(id);
 
@@ -117,11 +122,59 @@ function showAuth(){
  $("logout").style.display="none";
 }
 
-/* فعال‌سازی اعلان */
+/* تبدیل کلید عمومی VAPID */
+function urlBase64ToUint8Array(base64String){
+ const padding="=".repeat((4-base64String.length%4)%4);
+ const base64=(base64String+padding)
+  .replace(/-/g,"+")
+  .replace(/_/g,"/");
+ const raw=window.atob(base64);
+ return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+
+/* ثبت Service Worker */
+async function registerServiceWorker(){
+ if(!("serviceWorker" in navigator)){
+  throw new Error("مرورگر از Service Worker پشتیبانی نمی‌کند.");
+ }
+
+ swRegistration=await navigator.serviceWorker.register(
+  "./service-worker.js"
+ );
+
+ await navigator.serviceWorker.ready;
+ return swRegistration;
+}
+
+/* ذخیره اشتراک اعلان در Supabase */
+async function savePushSubscription(subscription){
+ const {error}=await db
+  .from("push_subscriptions")
+  .upsert({
+   user_id:currentUser.id,
+   subscription:subscription.toJSON()
+  },{
+   onConflict:"user_id,subscription"
+  });
+
+ if(error) throw error;
+}
+
+/* فعال‌سازی اعلان واقعی */
 async function enableNotifications(){
+
+ if(!currentUser){
+  alert("ابتدا وارد حساب کاربری‌ات شو.");
+  return;
+ }
 
  if(!("Notification" in window)){
   alert("مرورگر شما از اعلان پشتیبانی نمی‌کند.");
+  return;
+ }
+
+ if(!("PushManager" in window)){
+  alert("مرورگر شما از Web Push پشتیبانی نمی‌کند.");
   return;
  }
 
@@ -130,102 +183,49 @@ async function enableNotifications(){
   return;
  }
 
- if(Notification.permission==="granted"){
-  $("notifyBtn").textContent="🔔 اعلان فعال است";
-  status("اعلان‌ها قبلاً فعال شده‌اند.");
-  return;
- }
-
- if(Notification.permission==="denied"){
-  alert("اعلان‌ها در Chrome مسدود شده‌اند. باید از تنظیمات سایت، مجوز Notifications را روی Allow بگذاری.");
-  status("مجوز اعلان در Chrome مسدود است.");
-  return;
- }
-
  try{
+  $("notifyBtn").disabled=true;
+  status("در حال فعال‌سازی اعلان‌ها...");
+
   const permission=await Notification.requestPermission();
 
-  if(permission==="granted"){
-   $("notifyBtn").textContent="🔔 اعلان فعال است";
-   $("notifyBtn").style.background="#167b55";
-   status("اعلان‌ها با موفقیت فعال شدند.");
-
-   new Notification("X Chat",{
-    body:"اعلان‌های برنامه فعال شدند."
-   });
-
-  }else{
+  if(permission!=="granted"){
    status("مجوز اعلان داده نشد.");
-   alert("برای دریافت اعلان باید اجازه را تأیید کنی.");
+   return;
   }
 
+  const registration=await registerServiceWorker();
+
+  let subscription=await registration.pushManager.getSubscription();
+
+  if(!subscription){
+   subscription=await registration.pushManager.subscribe({
+    userVisibleOnly:true,
+    applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+   });
+  }
+
+  await savePushSubscription(subscription);
+
+  $("notifyBtn").textContent="🔔 اعلان فعال است";
+  $("notifyBtn").style.background="#167b55";
+
+  await registration.showNotification("X Chat",{
+   body:"اعلان‌های پیام‌رسان فعال شدند."
+  });
+
+  status("اعلان‌ها فعال و اشتراک ذخیره شد.");
+
  }catch(error){
-  status("خطا: "+error.message);
+  console.error(error);
+  status("خطا در فعال‌سازی اعلان: "+error.message);
   alert("خطا در فعال‌سازی اعلان: "+error.message);
+ }finally{
+  $("notifyBtn").disabled=false;
  }
 }
 
 $("notifyBtn").onclick=enableNotifications;
-
-/* بررسی پیام‌های جدید */
-async function checkNewNotifications(){
-
- if(!currentUser || checkingNotifications) return;
-
- checkingNotifications=true;
-
- try{
-
-  let query=db.from("messages")
-   .select("id,sender_id,receiver_id,content,created_at")
-   .eq("receiver_id",currentUser.id)
-   .order("created_at",{ascending:true})
-   .limit(50);
-
-  if(lastNotificationCheck){
-   query=query.gt("created_at",lastNotificationCheck);
-  }
-
-  const {data,error}=await query;
-
-  if(error) throw error;
-
-  for(const m of (data||[])){
-
-   if(
-    lastNotificationCheck &&
-    Notification.permission==="granted" &&
-    document.hidden
-   ){
-
-    let senderName="کاربر جدید";
-
-    const {data:profile}=await db.from("profiles")
-     .select("username")
-     .eq("id",m.sender_id)
-     .maybeSingle();
-
-    if(profile?.username){
-     senderName=profile.username;
-    }
-
-    new Notification("پیام از "+senderName,{
-     body:m.content,
-     tag:"xchat-"+m.id
-    });
-   }
-
-   if(!lastNotificationCheck || m.created_at>lastNotificationCheck){
-    lastNotificationCheck=m.created_at;
-   }
-  }
-
- }catch(error){
-  console.log("Notification error:",error.message);
- }finally{
-  checkingNotifications=false;
- }
-}
 
 async function ensureProfile(user){
 
@@ -322,9 +322,10 @@ async function loadMessages(){
  box.scrollTop=box.scrollHeight;
 }
 
+/* ارسال پیام و درخواست ارسال Push */
 async function sendMessage(){
 
- if(!selectedUser) return;
+ if(!selectedUser || !currentUser) return;
 
  const content=$("messageInput").value.trim();
 
@@ -332,11 +333,14 @@ async function sendMessage(){
 
  $("sendBtn").disabled=true;
 
- const {error}=await db.from("messages").insert({
-  sender_id:currentUser.id,
-  receiver_id:selectedUser.id,
-  content
- });
+ const {data:message,error}=await db.from("messages")
+  .insert({
+   sender_id:currentUser.id,
+   receiver_id:selectedUser.id,
+   content
+  })
+  .select("id")
+  .single();
 
  $("sendBtn").disabled=false;
 
@@ -347,6 +351,29 @@ async function sendMessage(){
 
  $("messageInput").value="";
  await loadMessages();
+
+ /* فراخوانی تابع اعلان */
+ try{
+  const {data,error:pushError}=await db.functions.invoke(
+   "send-push",
+   {
+    body:{message_id:message.id}
+   }
+  );
+
+  if(pushError){
+   console.error("Push function error:",pushError);
+   status("پیام ارسال شد؛ اما ارسال اعلان با خطا روبه‌رو شد.");
+   return;
+  }
+
+  console.log("Push result:",data);
+  status("پیام با موفقیت ارسال شد.");
+
+ }catch(error){
+  console.error("Push error:",error);
+  status("پیام ارسال شد؛ اما اعلان ارسال نشد.");
+ }
 }
 
 async function startApp(user){
@@ -361,21 +388,6 @@ async function startApp(user){
 
   await loadUsers();
 
-  const {data}=await db.from("messages")
-   .select("created_at")
-   .eq("receiver_id",currentUser.id)
-   .order("created_at",{ascending:false})
-   .limit(1);
-
-  lastNotificationCheck=
-   data?.[0]?.created_at ||
-   new Date().toISOString();
-
-  if(Notification.permission==="granted"){
-   $("notifyBtn").textContent="🔔 اعلان فعال است";
-   $("notifyBtn").style.background="#167b55";
-  }
-
   if(refreshTimer){
    clearInterval(refreshTimer);
   }
@@ -386,15 +398,25 @@ async function startApp(user){
    if(selectedUser){
     loadMessages();
    }
-
-   checkNewNotifications();
-
   },4000);
+
+  /* بررسی وضعیت اشتراک قبلی */
+  try{
+   const registration=await registerServiceWorker();
+   const subscription=await registration.pushManager.getSubscription();
+
+   if(subscription && Notification.permission==="granted"){
+    await savePushSubscription(subscription);
+    $("notifyBtn").textContent="🔔 اعلان فعال است";
+    $("notifyBtn").style.background="#167b55";
+   }
+  }catch(error){
+   console.log("Push setup:",error.message);
+  }
 
  }catch(error){
 
   showAuth();
-
   status("خطا در آماده‌سازی حساب: "+error.message);
  }
 }
@@ -476,13 +498,15 @@ $("logout").onclick=async()=>{
 
  currentUser=null;
  selectedUser=null;
- lastNotificationCheck=null;
 
  $("messages").innerHTML="";
  $("users").innerHTML="";
+ $("messageInput").disabled=true;
+ $("sendBtn").disabled=true;
+ $("notifyBtn").textContent="🔔 فعال‌سازی اعلان";
+ $("notifyBtn").style.background="#344b6b";
 
  showAuth();
-
  status("از حساب خارج شدی.");
 };
 
