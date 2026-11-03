@@ -13,7 +13,7 @@ header{background:#172b49;padding:18px;display:flex;justify-content:space-betwee
 .logo{font-size:23px;font-weight:bold;color:#55aaff}
 .small{color:#a9bdd7;font-size:12px;margin-top:5px}
 button{border:0;border-radius:10px;padding:12px 16px;background:#2785ed;color:white;font-weight:bold;cursor:pointer}
-button:disabled{opacity:.5}
+button:disabled{opacity:.5;cursor:not-allowed}
 input{width:100%;padding:14px;margin:8px 0;border:1px solid #344a68;border-radius:10px;background:#0b1729;color:white;font-size:14px}
 .auth{max-width:400px;margin:35px auto;padding:20px}
 .auth h2{text-align:center}
@@ -31,11 +31,15 @@ input{width:100%;padding:14px;margin:8px 0;border:1px solid #344a68;border-radiu
 .msg{width:fit-content;max-width:85%;padding:12px;border-radius:14px;margin:9px 0;background:#263b58;overflow-wrap:anywhere}
 .msg.mine{background:#1769bd;margin-right:auto}
 .msg time{display:block;font-size:10px;color:#d4e5f8;margin-top:6px}
-.send{display:flex;gap:8px;padding:12px;background:#14233a}
+.msg img{display:block;max-width:100%;max-height:260px;border-radius:10px;margin-top:8px}
+.file-link{display:inline-block;color:#fff;background:#344b6b;padding:9px;border-radius:8px;margin-top:8px;text-decoration:none}
+.send{display:flex;gap:8px;padding:12px;background:#14233a;align-items:center}
 .send input{margin:0;min-width:0}
 .send button{white-space:nowrap}
 #status{font-size:12px;color:#ffc76b;text-align:center;padding:8px;overflow-wrap:anywhere}
 .header-buttons{display:flex;gap:7px;align-items:center}
+.file-label{background:#344b6b;border-radius:10px;padding:12px;cursor:pointer;white-space:nowrap}
+#fileInput{display:none}
 @media(max-width:650px){
 .layout{grid-template-columns:1fr}
 .sidebar{border-left:0;border-bottom:1px solid #263954}
@@ -43,6 +47,8 @@ input{width:100%;padding:14px;margin:8px 0;border:1px solid #344a68;border-radiu
 .user{min-width:120px}
 .app{min-height:90vh}
 header{padding:13px}
+.send{gap:5px}
+.send button,.file-label{padding:11px 10px;font-size:12px}
 }
 </style>
 </head>
@@ -79,6 +85,8 @@ header{padding:13px}
 <div class="chat-title" id="chatTitle">یک کاربر انتخاب کن</div>
 <div id="messages"></div>
 <div class="send">
+<label class="file-label" for="fileInput">📎 فایل</label>
+<input id="fileInput" type="file" accept="image/*,.pdf,.txt,.doc,.docx,.zip" disabled>
 <input id="messageInput" placeholder="پیامت را بنویس..." disabled>
 <button id="sendBtn" disabled>ارسال</button>
 </div>
@@ -88,27 +96,18 @@ header{padding:13px}
 </div>
 
 <script>
-const SUPABASE_URL = "https://rxjmnlivdtivpknzwwcq.supabase.co";
-const SUPABASE_KEY = "sb_publishable_DhuXIk2DxDopcgbggz0RDw_qnCHu0aw";
+const SUPABASE_URL="https://rxjmnlivdtivpknzwwcq.supabase.co";
+const SUPABASE_KEY="sb_publishable_DhuXIk2DxDopcgbggz0RDw_qnCHu0aw";
+const VAPID_PUBLIC_KEY="BCezDQplrOU_SQHHuoGCub3Krmf7BkI6HYJAGVNI5EMuEYm6QelWLnTLaVeNuqWk1cJVcb3MXtMulGadoRz6RdA";
 
-const PUSH_FUNCTION_URL =
- "https://rxjmnlivdtivpknzwwcq.supabase.co/functions/v1/send-push";
-
-const VAPID_PUBLIC_KEY =
- "BCezDQplrOU_SQHHuoGCub3Krmf7BkI6HYJAGVNI5EMuEYm6QelWLnTLaVeNuqWk1cJVcb3MXtMulGadoRz6RdA";
-
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const db=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+const $=id=>document.getElementById(id);
 
 let currentUser=null;
 let selectedUser=null;
 let refreshTimer=null;
-let swRegistration=null;
 
-const $=id=>document.getElementById(id);
-
-function status(s){
- $("status").textContent=s;
-}
+function status(s){$("status").textContent=s}
 
 function showApp(){
  $("authArea").style.display="none";
@@ -122,80 +121,40 @@ function showAuth(){
  $("logout").style.display="none";
 }
 
-/* تبدیل کلید عمومی VAPID */
-function urlBase64ToUint8Array(base64String){
- const padding="=".repeat((4-base64String.length%4)%4);
- const base64=(base64String+padding)
-  .replace(/-/g,"+")
-  .replace(/_/g,"/");
- const raw=window.atob(base64);
- return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+function urlBase64ToUint8Array(value){
+ const padding="=".repeat((4-value.length%4)%4);
+ const base64=(value+padding).replace(/-/g,"+").replace(/_/g,"/");
+ return Uint8Array.from(atob(base64),c=>c.charCodeAt(0));
 }
 
-/* ثبت Service Worker */
 async function registerServiceWorker(){
- if(!("serviceWorker" in navigator)){
-  throw new Error("مرورگر از Service Worker پشتیبانی نمی‌کند.");
- }
-
- swRegistration=await navigator.serviceWorker.register(
-  "./service-worker.js"
- );
-
+ if(!("serviceWorker" in navigator)) throw new Error("Service Worker پشتیبانی نمی‌شود.");
+ const registration=await navigator.serviceWorker.register("./service-worker.js");
  await navigator.serviceWorker.ready;
- return swRegistration;
+ return registration;
 }
 
-/* ذخیره اشتراک اعلان در Supabase */
 async function savePushSubscription(subscription){
- const {error}=await db
-  .from("push_subscriptions")
-  .upsert({
-   user_id:currentUser.id,
-   subscription:subscription.toJSON()
-  },{
-   onConflict:"user_id,subscription"
-  });
-
+ const {error}=await db.from("push_subscriptions").upsert({
+  user_id:currentUser.id,
+  subscription:subscription.toJSON()
+ },{onConflict:"user_id,subscription"});
  if(error) throw error;
 }
 
-/* فعال‌سازی اعلان واقعی */
 async function enableNotifications(){
-
- if(!currentUser){
-  alert("ابتدا وارد حساب کاربری‌ات شو.");
-  return;
+ if(!currentUser){alert("ابتدا وارد حساب شو.");return}
+ if(!("Notification" in window)||!("PushManager" in window)){
+  alert("مرورگر از اعلان پشتیبانی نمی‌کند.");return;
  }
-
- if(!("Notification" in window)){
-  alert("مرورگر شما از اعلان پشتیبانی نمی‌کند.");
-  return;
- }
-
- if(!("PushManager" in window)){
-  alert("مرورگر شما از Web Push پشتیبانی نمی‌کند.");
-  return;
- }
-
- if(!window.isSecureContext){
-  alert("سایت باید با HTTPS باز شود.");
-  return;
- }
+ if(!window.isSecureContext){alert("سایت باید با HTTPS باز شود.");return}
 
  try{
   $("notifyBtn").disabled=true;
-  status("در حال فعال‌سازی اعلان‌ها...");
-
   const permission=await Notification.requestPermission();
-
-  if(permission!=="granted"){
-   status("مجوز اعلان داده نشد.");
-   return;
-  }
+  if(permission!=="granted"){status("مجوز اعلان داده نشد.");return}
 
   const registration=await registerServiceWorker();
-
   let subscription=await registration.pushManager.getSubscription();
 
   if(!subscription){
@@ -206,316 +165,280 @@ async function enableNotifications(){
   }
 
   await savePushSubscription(subscription);
-
   $("notifyBtn").textContent="🔔 اعلان فعال است";
   $("notifyBtn").style.background="#167b55";
-
-  await registration.showNotification("X Chat",{
-   body:"اعلان‌های پیام‌رسان فعال شدند."
-  });
-
-  status("اعلان‌ها فعال و اشتراک ذخیره شد.");
-
+  status("اعلان‌ها فعال شدند.");
  }catch(error){
   console.error(error);
-  status("خطا در فعال‌سازی اعلان: "+error.message);
-  alert("خطا در فعال‌سازی اعلان: "+error.message);
+  status("خطا در اعلان: "+error.message);
  }finally{
   $("notifyBtn").disabled=false;
  }
 }
-
 $("notifyBtn").onclick=enableNotifications;
 
 async function ensureProfile(user){
-
- const username=(
-  user.user_metadata?.username ||
-  user.email.split("@")[0]
- ).trim().slice(0,30);
-
+ const username=(user.user_metadata?.username||user.email.split("@")[0]).trim().slice(0,30);
  const {error}=await db.from("profiles").upsert(
   {id:user.id,username},
   {onConflict:"id",ignoreDuplicates:true}
  );
-
  if(error) throw error;
 }
 
 async function loadUsers(){
-
  const {data,error}=await db.from("profiles")
   .select("id,username")
   .neq("id",currentUser.id)
   .order("username");
 
- if(error){
-  status("خطا در دریافت کاربران: "+error.message);
-  return;
- }
-
+ if(error){status("خطا در دریافت کاربران: "+error.message);return}
  $("users").innerHTML="";
 
  (data||[]).forEach(user=>{
-
   const el=document.createElement("div");
-
-  el.className="user"+
-   (selectedUser?.id===user.id?" active":"");
-
+  el.className="user"+(selectedUser?.id===user.id?" active":"");
   el.textContent="👤 "+user.username;
-
-  el.onclick=()=>{
+  el.onclick=async()=>{
    selectedUser=user;
    $("chatTitle").textContent="چت با "+user.username;
    $("messageInput").disabled=false;
    $("sendBtn").disabled=false;
-
-   loadUsers();
-   loadMessages();
+   $("fileInput").disabled=false;
+   await loadUsers();
+   await loadMessages();
   };
-
   $("users").appendChild(el);
  });
 }
 
+/* نمایش پیام و فایل */
 async function loadMessages(){
+ if(!selectedUser||!currentUser)return;
 
- if(!selectedUser || !currentUser) return;
-
- const a=currentUser.id;
- const b=selectedUser.id;
-
+ const a=currentUser.id,b=selectedUser.id;
  const {data,error}=await db.from("messages")
-  .select("id,sender_id,receiver_id,content,created_at")
-  .or(
-   `and(sender_id.eq.${a},receiver_id.eq.${b}),and(sender_id.eq.${b},receiver_id.eq.${a})`
-  )
+  .select("id,sender_id,receiver_id,content,created_at,message_type,media_url")
+  .or(`and(sender_id.eq.${a},receiver_id.eq.${b}),and(sender_id.eq.${b},receiver_id.eq.${a})`)
   .order("created_at",{ascending:true})
   .limit(200);
 
- if(error){
-  status("خطا در دریافت پیام‌ها: "+error.message);
-  return;
- }
+ if(error){status("خطا در دریافت پیام‌ها: "+error.message);return}
 
  const box=$("messages");
  box.innerHTML="";
 
- (data||[]).forEach(m=>{
-
+ for(const m of (data||[])){
   const el=document.createElement("div");
+  el.className="msg"+(m.sender_id===currentUser.id?" mine":"");
 
-  el.className="msg"+
-   (m.sender_id===currentUser.id?" mine":"");
+  if(m.content){
+   const content=document.createElement("div");
+   content.textContent=m.content;
+   el.appendChild(content);
+  }
 
-  const content=document.createElement("div");
-  content.textContent=m.content;
+  if(m.media_url){
+   const {data:fileData,error:fileError}=await db.storage
+    .from("chat-media")
+    .createSignedUrl(m.media_url,3600);
+
+   if(!fileError&&fileData?.signedUrl){
+    if(m.message_type==="image"){
+     const img=document.createElement("img");
+     img.src=fileData.signedUrl;
+     img.alt="تصویر ارسال‌شده";
+     img.loading="lazy";
+     el.appendChild(img);
+    }else{
+     const link=document.createElement("a");
+     link.href=fileData.signedUrl;
+     link.target="_blank";
+     link.rel="noopener noreferrer";
+     link.className="file-link";
+     link.textContent="📎 دریافت فایل";
+     el.appendChild(link);
+    }
+   }else{
+    const errorText=document.createElement("div");
+    errorText.textContent="فایل در دسترس نیست.";
+    el.appendChild(errorText);
+   }
+  }
 
   const time=document.createElement("time");
   time.textContent=new Date(m.created_at).toLocaleString("fa-IR");
-
-  el.append(content,time);
+  el.appendChild(time);
   box.appendChild(el);
- });
-
+ }
  box.scrollTop=box.scrollHeight;
 }
 
-/* ارسال پیام و درخواست ارسال Push */
-async function sendMessage(){
+/* آپلود فایل در باکت خصوصی */
+async function uploadFile(file){
+ if(!currentUser)throw new Error("ابتدا وارد حساب شو.");
+ if(file.size>10*1024*1024)throw new Error("حجم فایل نباید بیشتر از ۱۰ مگابایت باشد.");
 
- if(!selectedUser || !currentUser) return;
+ const safeName=file.name.replace(/[^a-zA-Z0-9._-]/g,"_");
+ const path=currentUser.id+"/"+crypto.randomUUID()+"_"+safeName;
+
+ const {error}=await db.storage.from("chat-media").upload(path,file,{
+  cacheControl:"3600",
+  upsert:false,
+  contentType:file.type||"application/octet-stream"
+ });
+
+ if(error)throw error;
+ return path;
+}
+
+async function sendMessage(){
+ if(!selectedUser||!currentUser)return;
 
  const content=$("messageInput").value.trim();
+ const file=$("fileInput").files[0];
 
- if(!content) return;
+ if(!content&&!file)return;
 
  $("sendBtn").disabled=true;
+ $("fileInput").disabled=true;
 
- const {data:message,error}=await db.from("messages")
-  .insert({
-   sender_id:currentUser.id,
-   receiver_id:selectedUser.id,
-   content
-  })
-  .select("id")
-  .single();
-
- $("sendBtn").disabled=false;
-
- if(error){
-  status("ارسال نشد: "+error.message);
-  return;
- }
-
- $("messageInput").value="";
- await loadMessages();
-
- /* فراخوانی تابع اعلان */
  try{
-  const {data,error:pushError}=await db.functions.invoke(
-   "send-push",
-   {
-    body:{message_id:message.id}
-   }
-  );
+  let mediaUrl=null;
+  let messageType="text";
 
-  if(pushError){
-   console.error("Push function error:",pushError);
-   status("پیام ارسال شد؛ اما ارسال اعلان با خطا روبه‌رو شد.");
-   return;
+  if(file){
+   status("در حال آپلود فایل...");
+   mediaUrl=await uploadFile(file);
+   messageType=file.type.startsWith("image/")?"image":"file";
   }
 
-  console.log("Push result:",data);
-  status("پیام با موفقیت ارسال شد.");
+  status("در حال ارسال پیام...");
 
+  const {data:message,error}=await db.from("messages").insert({
+   sender_id:currentUser.id,
+   receiver_id:selectedUser.id,
+   content,
+   message_type:messageType,
+   media_url:mediaUrl
+  }).select("id").single();
+
+  if(error)throw error;
+
+  $("messageInput").value="";
+  $("fileInput").value="";
+  await loadMessages();
+
+  /* درخواست اعلان */
+  try{
+   const {error:pushError}=await db.functions.invoke("send-push",{
+    body:{message_id:message.id}
+   });
+   if(pushError)console.error("Push error:",pushError);
+  }catch(pushError){
+   console.error(pushError);
+  }
+
+  status("پیام با موفقیت ارسال شد.");
  }catch(error){
-  console.error("Push error:",error);
-  status("پیام ارسال شد؛ اما اعلان ارسال نشد.");
+  console.error(error);
+  status("خطا در ارسال: "+error.message);
+ }finally{
+  $("sendBtn").disabled=false;
+  $("fileInput").disabled=false;
  }
 }
 
 async function startApp(user){
-
  try{
-
   currentUser=user;
-
   await ensureProfile(user);
-
   showApp();
-
   await loadUsers();
 
-  if(refreshTimer){
-   clearInterval(refreshTimer);
-  }
-
+  if(refreshTimer)clearInterval(refreshTimer);
   refreshTimer=setInterval(()=>{
    loadUsers();
+   if(selectedUser)loadMessages();
+  },5000);
 
-   if(selectedUser){
-    loadMessages();
-   }
-  },4000);
-
-  /* بررسی وضعیت اشتراک قبلی */
   try{
    const registration=await registerServiceWorker();
    const subscription=await registration.pushManager.getSubscription();
-
-   if(subscription && Notification.permission==="granted"){
+   if(subscription&&Notification.permission==="granted"){
     await savePushSubscription(subscription);
     $("notifyBtn").textContent="🔔 اعلان فعال است";
     $("notifyBtn").style.background="#167b55";
    }
-  }catch(error){
-   console.log("Push setup:",error.message);
-  }
-
+  }catch(error){console.log("Push setup:",error.message)}
  }catch(error){
-
   showAuth();
   status("خطا در آماده‌سازی حساب: "+error.message);
  }
 }
 
 $("signup").onclick=async()=>{
-
  const username=$("username").value.trim();
  const email=$("email").value.trim();
  const password=$("password").value;
 
- if(
-  !username ||
-  username.length>30 ||
-  !email ||
-  password.length<6
- ){
+ if(!username||username.length>30||!email||password.length<6){
   status("نام کاربری، ایمیل و رمز حداقل ۶ حرف را وارد کن.");
   return;
  }
 
  status("در حال ثبت‌نام...");
-
  const {data,error}=await db.auth.signUp({
-  email,
-  password,
-  options:{
-   data:{username}
-  }
+  email,password,options:{data:{username}}
  });
 
- if(error){
-  status("خطا: "+error.message);
-  return;
- }
-
+ if(error){status("خطا: "+error.message);return}
  if(!data.session){
-  status("ثبت‌نام انجام شد. ایمیلت را تأیید کن، سپس وارد شو.");
+  status("ثبت‌نام شد. ایمیلت را تأیید کن و سپس وارد شو.");
   return;
  }
-
  await startApp(data.user);
 };
 
 $("login").onclick=async()=>{
-
  const email=$("email").value.trim();
  const password=$("password").value;
-
  status("در حال ورود...");
 
- const {data,error}=await db.auth.signInWithPassword({
-  email,
-  password
- });
-
- if(error){
-  status("خطا در ورود: "+error.message);
-  return;
- }
-
+ const {data,error}=await db.auth.signInWithPassword({email,password});
+ if(error){status("خطا در ورود: "+error.message);return}
  await startApp(data.user);
 };
 
 $("sendBtn").onclick=sendMessage;
-
 $("messageInput").addEventListener("keydown",e=>{
- if(e.key==="Enter"){
-  sendMessage();
- }
+ if(e.key==="Enter")sendMessage();
+});
+
+$("fileInput").addEventListener("change",()=>{
+ const file=$("fileInput").files[0];
+ if(file)status("فایل انتخاب شد: "+file.name);
 });
 
 $("logout").onclick=async()=>{
-
- if(refreshTimer){
-  clearInterval(refreshTimer);
- }
-
+ if(refreshTimer)clearInterval(refreshTimer);
  await db.auth.signOut();
-
  currentUser=null;
  selectedUser=null;
-
  $("messages").innerHTML="";
  $("users").innerHTML="";
  $("messageInput").disabled=true;
  $("sendBtn").disabled=true;
+ $("fileInput").disabled=true;
  $("notifyBtn").textContent="🔔 فعال‌سازی اعلان";
  $("notifyBtn").style.background="#344b6b";
-
  showAuth();
  status("از حساب خارج شدی.");
 };
 
 (async()=>{
  const {data}=await db.auth.getSession();
-
- if(data.session){
-  await startApp(data.session.user);
- }
+ if(data.session)await startApp(data.session.user);
 })();
 </script>
 </body>
