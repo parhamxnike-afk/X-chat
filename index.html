@@ -213,22 +213,42 @@ async function loadUsers(){
 }
 
 /* نمایش پیام و فایل */
+
 async function loadMessages(){
  if(!selectedUser||!currentUser)return;
 
- const a=currentUser.id,b=selectedUser.id;
+ const box=$("messages");
+ const a=currentUser.id;
+ const b=selectedUser.id;
+
  const {data,error}=await db.from("messages")
   .select("id,sender_id,receiver_id,content,created_at,message_type,media_url")
   .or(`and(sender_id.eq.${a},receiver_id.eq.${b}),and(sender_id.eq.${b},receiver_id.eq.${a})`)
   .order("created_at",{ascending:true})
   .limit(200);
 
- if(error){status("خطا در دریافت پیام‌ها: "+error.message);return}
+ if(error){
+  status("خطا در دریافت پیام‌ها: "+error.message);
+  return;
+ }
 
- const box=$("messages");
- box.innerHTML="";
+ const messages=data||[];
 
- for(const m of (data||[])){
+ const signature=b+":"+JSON.stringify(
+  messages.map(m=>[
+   m.id,m.content,m.media_url,m.message_type,m.created_at
+  ])
+ );
+
+ // اگر پیام‌ها تغییری نکرده‌اند، صفحه را دوباره نساز
+ if(box.dataset.signature===signature)return;
+
+ const wasAtBottom=
+  box.scrollHeight-box.scrollTop-box.clientHeight<80;
+
+ const fragment=document.createDocumentFragment();
+
+ for(const m of messages){
   const el=document.createElement("div");
   el.className="msg"+(m.sender_id===currentUser.id?" mine":"");
 
@@ -269,9 +289,16 @@ async function loadMessages(){
   const time=document.createElement("time");
   time.textContent=new Date(m.created_at).toLocaleString("fa-IR");
   el.appendChild(time);
-  box.appendChild(el);
+
+  fragment.appendChild(el);
  }
- box.scrollTop=box.scrollHeight;
+
+ box.replaceChildren(fragment);
+ box.dataset.signature=signature;
+
+ if(wasAtBottom){
+  box.scrollTop=box.scrollHeight;
+ }
 }
 
 /* آپلود فایل در باکت خصوصی */
