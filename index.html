@@ -322,11 +322,13 @@ async function uploadFile(file){
 async function sendMessage(){
  if(!selectedUser||!currentUser)return;
 
- const content=$("messageInput").value.trim();
+ let content=$("messageInput").value.trim();
  const file=$("fileInput").files[0];
 
  if(!content&&!file)return;
-
+if(file&&!content){
+ content=" ";
+}
  $("sendBtn").disabled=true;
  $("fileInput").disabled=true;
 
